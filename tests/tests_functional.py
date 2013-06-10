@@ -55,9 +55,11 @@ class ProcessorTest(SimpleTestCase):
             finders.get_finder = finders._get_finder
         if not hasattr(cls, '_original_staticfiles_storage'):
             cls._original_staticfiles_storage = storage.staticfiles_storage
+        super(ProcessorTest, cls).setUpClass()
 
     @classmethod
     def tearDownClass(cls):
+        super(ProcessorTest, cls).tearDownClass()
         # Restore monkey-patched values
         if hasattr(cls, '_original_get_finder'):
             finders.get_finder = cls._original_get_finder
