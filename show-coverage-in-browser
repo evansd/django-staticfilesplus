@@ -1,0 +1,5 @@
+#!/bin/bash
+set -e
+export COVERAGE_FILE=".coverage.${1:-py33}"
+coverage html
+x-www-browser "file://$PWD/htmlcov/index.html"
