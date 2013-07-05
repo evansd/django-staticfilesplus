@@ -9,7 +9,7 @@ from django.conf import settings
 from . import BaseProcessor
 
 
-class LessCSSProcessor(BaseProcessor):
+class LESSProcessor(BaseProcessor):
     original_suffix = '.less'
     processed_suffix = '.css'
 
@@ -17,13 +17,13 @@ class LessCSSProcessor(BaseProcessor):
         return any(part.startswith('_') for part in path.split(os.sep))
 
     def process_file(self, input_path, output_path):
-        compress = getattr(settings, 'STATICFILESPLUS_LESSCSS_COMPRESS',
+        compress = getattr(settings, 'STATICFILESPLUS_LESS_COMPRESS',
                 not settings.DEBUG)
         extra_args = ['--compress'] if compress else []
         try:
             subprocess.check_call(['lessc'] + extra_args + [input_path, output_path])
         except OSError as e:
             if e.errno == errno.ENOENT:
-                raise ValueError('You need to install LessCSS')
+                raise ValueError('You need to install LESS, see http://lesscss.org')
             else:
                 raise
