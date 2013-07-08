@@ -19,4 +19,4 @@ Features:
  * Not a single line of my code needs to run in production: once you've run
    ``collectstatic``, its work is done.
 
-Read the documentation: http://django-staticfilesplus.readthedocs.org
+Read the documentation: http://django-staticfilesplus.evans.io
