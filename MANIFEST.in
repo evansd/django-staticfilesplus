@@ -1,5 +1,7 @@
 include README.rst
 include LICENSE
+include tox.ini
 recursive-include staticfilesplus *
+recursive-include docs *
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
