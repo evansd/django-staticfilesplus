@@ -18,6 +18,7 @@ setup(
     url='http://django-staticfilesplus.evans.io',
     packages=['staticfilesplus'],
     license='Apache license',
+    description="Adds pre-processor support to Django's contrib.staticfiles",
     long_description=read('README.rst'),
     classifiers=[
         'Development Status :: 4 - Beta',
