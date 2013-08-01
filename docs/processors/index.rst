@@ -33,8 +33,8 @@ to handle CoffeeScript files:
                    check_call(['coffee', '--stdio'], stdin=infile, stdout=outfile)
 
 
-API
-~~~
+Processor API
+~~~~~~~~~~~~~
 A valid processor is class that implements the following set of methods.
 
 First, we have a pair of methods which are given filenames and determine which files
@@ -68,6 +68,8 @@ Finally, we have:
 
    Takes a filename (before processing) and returns a Boolean. If it returns ``True`` the
    file will be ignored by ``contrib.staticfiles`` as if it did not exist.
+
+To activate your processor, add its dotted path to ``STATICFILESPLUS_PROCESSORS`` in ``settings.py``
 
 
 BaseProcessor
