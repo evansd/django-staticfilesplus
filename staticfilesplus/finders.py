@@ -36,7 +36,7 @@ class ProcessorMixin(object):
 
     def find(self, path, all=False):
         if all:
-            raise ValueError("Staticfilesplus can't handle the `all` flag at the moment")
+            raise NotImplementedError("Staticfilesplus can't handle the `all` flag at the moment")
         # Walk the list of processors, seeing if any want to handle
         # this request and if there's a matching file
         tried_names = set()
