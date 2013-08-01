@@ -35,33 +35,27 @@ class ProcessorMixin(object):
             self.processors.append(Processor())
 
     def find(self, path, all=False):
+        if all:
+            raise ValueError("Staticfilesplus can't handle the `all` flag at the moment")
         # Walk the list of processors, seeing if any want to handle
-        # this request
-        matched_processor = None
+        # this request and if there's a matching file
+        tried_names = set()
         for processor in self.processors:
             orig_name = processor.get_original_name(path)
-            if orig_name is not None:
-                matched_processor = processor
-                break
-        # We can't handle the `all` flag at the moment
-        if not matched_processor or all:
-            return super(ProcessorMixin, self).find(path, all=all)
-        else:
-            # If the processor explicitly excludes this file then pretend
-            # we've found nothing
-            if matched_processor.is_ignored_file(orig_name):
-                return []
-            # Search for the original file
+            if orig_name is None or orig_name in tried_names:
+                continue
+            tried_names.add(orig_name)
             match = super(ProcessorMixin, self).find(orig_name)
-            # If we don't find a match for our transformed name, fall back
-            # to searching for the untouched name
-            if not match:
-                if path != orig_name:
-                    return super(ProcessorMixin, self).find(path)
+            if match:
+                if processor.is_ignored_file(orig_name):
+                    return []
                 else:
-                    return match
-            # Process the file
-            return self.process_file(matched_processor, match, path)
+                    return self.process_file(processor, match, path)
+        # As a last resort we try the untransformed path
+        if path not in tried_names:
+            return super(ProcessorMixin, self).find(path)
+        else:
+            return []
 
     def list(self, *args, **kwargs):
         for name, storage in super(ProcessorMixin, self).list(*args, **kwargs):
