@@ -1,12 +1,11 @@
 from __future__ import absolute_import, unicode_literals
 
-import errno
 import os
-import subprocess
 
 from django.conf import settings
 
 from . import BaseProcessor
+from ..utils import call_command
 
 
 class LESSProcessor(BaseProcessor):
@@ -19,11 +18,7 @@ class LESSProcessor(BaseProcessor):
     def process_file(self, input_path, output_path):
         compress = getattr(settings, 'STATICFILESPLUS_LESS_COMPRESS',
                 not settings.DEBUG)
+        less_bin = getattr(settings, 'STATICFILESPLUS_LESS_BIN', 'lessc')
         extra_args = ['--compress'] if compress else []
-        try:
-            subprocess.check_call(['lessc'] + extra_args + [input_path, output_path])
-        except OSError as e:
-            if e.errno == errno.ENOENT:
-                raise ValueError('You need to install LESS, see http://lesscss.org')
-            else:
-                raise
+        call_command([less_bin] + extra_args + [input_path, output_path],
+                hint="Have you installed LESS? See http://lesscss.org")

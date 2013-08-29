@@ -14,17 +14,17 @@ from staticfilesplus.processors.less import LESSProcessor
 @override_settings(STATICFILESPLUS_LESS_COMPRESS=False)
 class LESSProcessorTest(SimpleTestCase):
 
-    @patch('staticfilesplus.processors.less.subprocess', autospec=True)
-    def test_calls_out_to_lessc(self, mock_subprocess):
+    @patch('staticfilesplus.processors.less.call_command', autospec=True)
+    def test_calls_out_to_lessc(self, mock_call_command):
         LESSProcessor().process_file('inpath', 'outpath')
-        mock_subprocess.check_call.assert_called_with(
+        self.assertEqual(mock_call_command.call_args[0][0],
                 ['lessc', 'inpath', 'outpath'])
 
-    @patch('staticfilesplus.processors.less.subprocess', autospec=True)
-    def test_compress_setting(self, mock_subprocess):
+    @patch('staticfilesplus.processors.less.call_command', autospec=True)
+    def test_compress_setting(self, mock_call_command):
         with override_settings(STATICFILESPLUS_LESS_COMPRESS=True):
             LESSProcessor().process_file('inpath', 'outpath')
-        mock_subprocess.check_call.assert_called_with(
+        self.assertEqual(mock_call_command.call_args[0][0],
                 ['lessc', '--compress', 'inpath', 'outpath'])
 
     def test_ignores_paths_with_underscores(self):
