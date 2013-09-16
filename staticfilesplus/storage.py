@@ -37,11 +37,16 @@ class CachedFilesPlusMixin(CachedFilesMixin):
         Wrap the original post_process method and delete the unversioned files
         if that option is enabled
         """
+        to_delete = []
         files = super(CachedFilesPlusMixin, self).post_process(*args, **kwargs)
         for name, hashed_name, processed in files:
-            if self.remove_unversioned and processed:
-                self.delete(name)
+            if self.remove_unversioned and name != hashed_name:
+                to_delete.append(name)
             yield name, hashed_name, processed
+        # Remove unversioned files only at the end of processing in
+        # case they're needed during the rewrite-URLs-in-CSS phase
+        for name in to_delete:
+            self.delete(name)
 
 
 class CachedStaticFilesPlusStorage(CachedFilesPlusMixin, StaticFilesStorage):
