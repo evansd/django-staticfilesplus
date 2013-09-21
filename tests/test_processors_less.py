@@ -11,21 +11,23 @@ from django.test.utils import override_settings
 from staticfilesplus.processors.less import LESSProcessor
 
 
-@override_settings(STATICFILESPLUS_LESS_COMPRESS=False)
+@override_settings(
+        STATICFILES_DIRS=('/dev/null', '/dev/zero'),
+        STATICFILESPLUS_LESS_COMPRESS=False)
 class LESSProcessorTest(SimpleTestCase):
 
     @patch('staticfilesplus.processors.less.call_command', autospec=True)
     def test_calls_out_to_lessc(self, mock_call_command):
         LESSProcessor().process_file('inpath', 'outpath')
         self.assertEqual(mock_call_command.call_args[0][0],
-                ['lessc', 'inpath', 'outpath'])
+                ['lessc', '--include-path=/dev/null:/dev/zero',  'inpath', 'outpath'])
 
     @patch('staticfilesplus.processors.less.call_command', autospec=True)
     def test_compress_setting(self, mock_call_command):
         with override_settings(STATICFILESPLUS_LESS_COMPRESS=True):
             LESSProcessor().process_file('inpath', 'outpath')
         self.assertEqual(mock_call_command.call_args[0][0],
-                ['lessc', '--compress', 'inpath', 'outpath'])
+                ['lessc', '--include-path=/dev/null:/dev/zero', '--compress', 'inpath', 'outpath'])
 
     def test_ignores_paths_with_underscores(self):
         processor = LESSProcessor()

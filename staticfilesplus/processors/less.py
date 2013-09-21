@@ -5,7 +5,7 @@ import os
 from django.conf import settings
 
 from . import BaseProcessor
-from ..utils import call_command
+from ..utils import call_command, get_staticfiles_dirs
 
 
 class LESSProcessor(BaseProcessor):
@@ -20,5 +20,7 @@ class LESSProcessor(BaseProcessor):
                 not settings.DEBUG)
         less_bin = getattr(settings, 'STATICFILESPLUS_LESS_BIN', 'lessc')
         extra_args = ['--compress'] if compress else []
-        call_command([less_bin] + extra_args + [input_path, output_path],
-                hint="Have you installed LESS? See http://lesscss.org")
+        include_path = os.pathsep.join(get_staticfiles_dirs())
+        call_command([less_bin, '--include-path={}'.format(include_path)]
+                    + extra_args + [input_path, output_path],
+               hint="Have you installed LESS? See http://lesscss.org")
