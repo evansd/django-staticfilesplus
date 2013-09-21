@@ -31,12 +31,12 @@ class BaseStaticfilesPlusTest(SimpleTestCase):
         test state leaking out. We store the originals and replce them when
         we're done.
         """
-        if not hasattr(cls, '_original_get_finder'):
-            cls._original_get_finder = finders.get_finder
+        if not hasattr(cls, '_originals'):
+            cls._originals = {}
+            cls._originals['get_finder'] = finders.get_finder
             # Replace memoized version with the underlying function
             finders.get_finder = finders._get_finder
-        if not hasattr(cls, '_original_staticfiles_storage'):
-            cls._original_staticfiles_storage = storage.staticfiles_storage
+            cls._originals['staticfiles_storage'] = storage.staticfiles_storage
         # Make a temporary directory
         cls.tmp = tempfile.mkdtemp()
         super(BaseStaticfilesPlusTest, cls).setUpClass()
@@ -47,12 +47,10 @@ class BaseStaticfilesPlusTest(SimpleTestCase):
         # Remove temporary directory
         shutil.rmtree(cls.tmp)
         # Restore monkey-patched values
-        if hasattr(cls, '_original_get_finder'):
-            finders.get_finder = cls._original_get_finder
-            del cls._original_get_finder
-        if hasattr(cls, '_original_staticfiles_storage'):
-            storage.staticfiles_storage = cls._original_staticfiles_storage
-            del cls._original_staticfiles_storage
+        if hasattr(cls, '_originals'):
+            finders.get_finder = cls._originals['get_finder']
+            storage.staticfiles_storage = cls._originals['staticfiles_storage']
+            del cls._originals
 
     def setUp(self):
         settings.STATIC_ROOT = self.tmp_dir()
