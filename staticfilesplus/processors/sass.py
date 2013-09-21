@@ -19,22 +19,11 @@ class SassProcessor(BaseProcessor):
         compress = getattr(settings, 'STATICFILESPLUS_SASS_COMPRESS',
                 not settings.DEBUG)
         sass_bin = getattr(settings, 'STATICFILESPLUS_SASS_BIN', 'sass')
-        if compress:
-            extra_args = ['--style', 'compressed']
-        else:
-            extra_args = []
-        call_command([sass_bin, '--load-path', self.get_load_path()]
+        extra_args = ['--style', 'compressed'] if compress else []
+        load_path = os.pathsep.join(get_staticfiles_dirs())
+        call_command([sass_bin, '--load-path', load_path]
                 + extra_args + ['--update', input_path + ':' + output_path],
             hint="Have you installed Sass? See http://sass-lang.com")
-
-    def get_load_path(self):
-        try:
-            return self._load_path
-        except AttributeError:
-            pass
-        dirs = get_staticfiles_dirs()
-        self._load_path = os.pathsep.join(dirs)
-        return self._load_path
 
 
 class ScssProcessor(SassProcessor):
