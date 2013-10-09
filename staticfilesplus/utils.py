@@ -1,4 +1,5 @@
 import errno
+import os
 import subprocess
 
 from django.core.exceptions import ImproperlyConfigured
@@ -42,6 +43,7 @@ def call_command(*args, **kwargs):
                 output=b'\n'.join(filter(None, (stdout, stderr))))
     return stdout
 
+
 class CalledProcessError(subprocess.CalledProcessError):
     """
     Wraps subprocess.CalledProcessError to produce slightly more readable
@@ -57,3 +59,24 @@ class CalledProcessError(subprocess.CalledProcessError):
                     returncode=self.returncode,
                     output=self.output.decode('utf8'))
 
+
+def any_files_modified_since(target_file, directories, extension):
+    """
+    Checks whether any files in `directories` matching `extension`
+    have been modified since `target_file` was last modified
+    """
+    try:
+        target_last_modified = os.path.getmtime(target_file)
+    except OSError as e:
+        if e.errno == errno.ENOENT:
+            return True
+        raise
+    for directory in directories:
+        for root, _, files in os.walk(directory):
+            for filename in files:
+                if not filename.endswith(extension):
+                    continue
+                last_modified = os.path.getmtime(os.path.join(root, filename))
+                if last_modified > target_last_modified:
+                    return True
+    return False
