@@ -1,4 +1,3 @@
-import errno
 import os
 
 from django.conf import settings
@@ -18,9 +17,9 @@ class ProcessorMixin(object):
     def __init__(self, *args, **kwargs):
         super(ProcessorMixin, self).__init__(*args, **kwargs)
         # Configure temporary storage space for processed files
-        tmp_dir = getattr(settings, 'STATICFILESPLUS_TMP_DIR',
+        self.tmp_dir = getattr(settings, 'STATICFILESPLUS_TMP_DIR',
                           os.path.join(settings.STATIC_ROOT, 'staticfilesplus_tmp'))
-        self.tmp_storage = FileSystemStorage(location=tmp_dir)
+        self.tmp_storage = FileSystemStorage(location=self.tmp_dir)
         # Can't set this as None through the constructor because it will
         # default to MEDIA_URL
         self.tmp_storage.base_url = None
@@ -34,62 +33,45 @@ class ProcessorMixin(object):
             Processor = get_callable(processor)
             self.processors.append(Processor())
 
-    def find(self, path, all=False):
+    def find(self, original_name, all=False):
         if all:
-            raise NotImplementedError("Staticfilesplus can't handle the `all` flag at the moment")
-        # Walk the list of processors, seeing if any want to handle
-        # this request and if there's a matching file
-        tried_names = set()
-        for processor in self.processors:
-            orig_name = processor.get_original_name(path)
-            if orig_name is None or orig_name in tried_names:
-                continue
-            tried_names.add(orig_name)
-            match = super(ProcessorMixin, self).find(orig_name)
-            if match:
-                if processor.is_ignored_file(orig_name):
-                    return []
-                else:
-                    return self.process_file(processor, match, path)
-        # As a last resort we try the untransformed path
-        if path not in tried_names:
-            return super(ProcessorMixin, self).find(path)
+            raise NotImplementedError(
+                    "Staticfilesplus can't handle the `all` flag at the moment")
+        for name in self.candidate_names(original_name):
+            path = super(ProcessorMixin, self).find(name)
+            if path:
+                break
         else:
             return []
+        for processor in self.processors:
+            outputs = processor.process_file(name, path, self.tmp_dir)
+            if outputs is not None:
+                if original_name in outputs:
+                    return os.path.join(self.tmp_dir, original_name)
+                else:
+                    return []
+        else:
+            return path
+
+    def candidate_names(self, original_name):
+        for processor in self.processors:
+            name = processor.reverse_mapping(original_name)
+            if name is not None:
+                yield name
+        yield original_name
 
     def list(self, *args, **kwargs):
         for name, storage in super(ProcessorMixin, self).list(*args, **kwargs):
-            # Walk the list of processors, seeing if any want to handle
-            # this type of file
-            matched_processor = None
+            path = storage.path(name)
             for processor in self.processors:
-                processed_name = processor.get_processed_name(name)
-                if processed_name is not None:
-                    matched_processor = processor
+                outputs = processor.process_file(
+                        name, path, self.tmp_dir)
+                if outputs is not None:
+                    for output_name in outputs:
+                        yield output_name, self.tmp_storage
                     break
-            if matched_processor is None:
-                yield name, storage
             else:
-                # If the processor explicitly excludes this file then pretend
-                # we never found it
-                if matched_processor.is_ignored_file(name):
-                    continue
-                path = storage.path(name)
-                self.process_file(matched_processor, path, processed_name)
-                yield processed_name, self.tmp_storage
-
-    def process_file(self, processor, path, processed_name):
-        # Get the full output path
-        output_path = self.tmp_storage.path(processed_name)
-        # Create the required directories
-        try:
-            os.makedirs(os.path.dirname(output_path), 0o775)
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
-        # Process the file
-        processor.process_file(path, output_path)
-        return output_path
+                yield name, storage
 
 
 class FileSystemFinder(ProcessorMixin, DjangoFileSystemFinder):

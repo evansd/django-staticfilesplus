@@ -5,9 +5,8 @@ import os
 from django.conf import settings
 from django.template.loader import get_template_from_string, Context
 
-from . import BaseProcessor
 from ..lib.directive_processor import DirectiveProcessor
-from ..utils import get_staticfiles_dirs, call_command
+from ..utils import get_staticfiles_dirs, call_command, create
 
 
 class DjangoDirectiveProcessor(DirectiveProcessor):
@@ -36,26 +35,30 @@ class DjangoDirectiveProcessor(DirectiveProcessor):
         return contents
 
 
-class JavaScriptProcessor(BaseProcessor):
-    original_suffix = '.js'
-    processed_suffix = '.js'
+class JavaScriptProcessor(object):
 
     directive_processor = None
 
-    def is_ignored_file(self, path):
-        return any(part.startswith('_') for part in path.split(os.sep))
+    def reverse_mapping(self, name):
+        return None
 
-    def process_file(self, input_path, output_path):
+    def process_file(self, input_name, input_path, output_dir):
+        if not input_name.endswith('.js'):
+            return None
+        if input_name.startswith('_') or '/_' in input_name:
+            return []
         # Initialise DirectiveProcessor if not already done so
         if not self.directive_processor:
             self.directive_processor = DjangoDirectiveProcessor()
         compress = getattr(settings, 'STATICFILESPLUS_JS_COMPRESS',
                 not settings.DEBUG)
-        with open(output_path, 'wb') as f:
+        output_path = os.path.join(output_dir, input_name)
+        with create(output_path) as f:
             contents = self.directive_processor.load(input_path)
             if compress:
                 contents = self.compress(contents)
             f.write(contents.encode('utf-8'))
+        return [input_name]
 
     def compress(self, contents):
         compress_bin = getattr(settings, 'STATICFILESPLUS_JS_COMPRESS_BIN', 'uglifyjs')

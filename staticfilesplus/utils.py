@@ -1,3 +1,4 @@
+import contextlib
 import errno
 import os
 import subprocess
@@ -5,6 +6,31 @@ import subprocess
 from django.core.exceptions import ImproperlyConfigured
 from django.contrib.staticfiles.finders import (get_finders,
         AppDirectoriesFinder, FileSystemFinder)
+
+
+@contextlib.contextmanager
+def create(filename):
+    """
+    Opens `filename` for writing, creating any necessary
+    parent directories
+    """
+    try:
+        with open(filename, 'wb') as handle:
+            yield handle
+    except IOError as e:
+        if e.errno != errno.ENOENT:
+            raise
+        make_directories(filename)
+        with open(filename, 'wb') as handle:
+            yield handle
+
+def make_directories(filename):
+    path = os.path.dirname(filename)
+    try:
+        os.makedirs(path, 0o775)
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
 
 
 def get_staticfiles_dirs():
