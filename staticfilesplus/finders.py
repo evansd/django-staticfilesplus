@@ -9,6 +9,24 @@ from django.contrib.staticfiles.finders import (
 from django.core.urlresolvers import get_callable
 
 
+class ArbitraryFileStorage(FileSystemStorage):
+    """
+    Storage backend which allows an arbitrary mapping of names to paths
+    """
+
+    def __init__(self):
+        self.base_location = None
+        self.location = None
+        self.base_url = None
+        self.file_map = {}
+
+    def path(self, name):
+        return self.file_map[name]
+
+    def add_file(self, name, path):
+        self.file_map[name] = path
+
+
 class ProcessorMixin(object):
     """
     Adds pre-processor support to a StaticFilesFinder
@@ -16,13 +34,8 @@ class ProcessorMixin(object):
 
     def __init__(self, *args, **kwargs):
         super(ProcessorMixin, self).__init__(*args, **kwargs)
-        # Configure temporary storage space for processed files
         self.tmp_dir = getattr(settings, 'STATICFILESPLUS_TMP_DIR',
                           os.path.join(settings.STATIC_ROOT, 'staticfilesplus_tmp'))
-        self.tmp_storage = FileSystemStorage(location=self.tmp_dir)
-        # Can't set this as None through the constructor because it will
-        # default to MEDIA_URL
-        self.tmp_storage.base_url = None
         # Configure processors
         if not isinstance(settings.STATICFILESPLUS_PROCESSORS, (list, tuple)):
             raise ImproperlyConfigured(
@@ -37,40 +50,47 @@ class ProcessorMixin(object):
         if all:
             raise NotImplementedError(
                     "Staticfilesplus can't handle the `all` flag at the moment")
-        for name in self.candidate_names(original_name):
-            path = super(ProcessorMixin, self).find(name)
-            if path:
-                break
-        else:
-            return []
+        for name, path in self.candidate_files(original_name):
+            outputs = self.process_file(name, path)
+            if outputs is not None:
+                for output_name, output_path in outputs:
+                    if output_name == original_name:
+                        return output_path
+            elif name == original_name:
+                return path
+        return []
+
+    def candidate_files(self, original_name):
+        names = [processor.reverse_mapping(original_name)
+                    for processor in self.processors]
+        names.append(original_name)
+        seen = set()
+        for name in names:
+            if name is not None and name not in seen:
+                seen.add(name)
+                path = super(ProcessorMixin, self).find(name)
+                if path:
+                    yield name, path
+
+    def process_file(self, name, path):
         for processor in self.processors:
             outputs = processor.process_file(name, path, self.tmp_dir)
             if outputs is not None:
-                if original_name in outputs:
-                    return os.path.join(self.tmp_dir, original_name)
-                else:
-                    return []
-        else:
-            return path
-
-    def candidate_names(self, original_name):
-        for processor in self.processors:
-            name = processor.reverse_mapping(original_name)
-            if name is not None:
-                yield name
-        yield original_name
+                return outputs
+        return None
 
     def list(self, *args, **kwargs):
+        output_storage = ArbitraryFileStorage()
         for name, storage in super(ProcessorMixin, self).list(*args, **kwargs):
             path = storage.path(name)
-            for processor in self.processors:
-                outputs = processor.process_file(
-                        name, path, self.tmp_dir)
-                if outputs is not None:
-                    for output_name in outputs:
-                        yield output_name, self.tmp_storage
-                    break
+            outputs = self.process_file(name, path)
+            if outputs is not None:
+                for output_name, output_path in outputs:
+                    output_storage.add_file(output_name, output_path)
+                    yield output_name, output_storage
             else:
+                # If no processor has claimed this file, yield the original
+                # values
                 yield name, storage
 
 

@@ -1,11 +1,31 @@
 import contextlib
 import errno
+import hashlib
 import os
 import subprocess
 
 from django.core.exceptions import ImproperlyConfigured
 from django.contrib.staticfiles.finders import (get_finders,
         AppDirectoriesFinder, FileSystemFinder)
+
+
+class Config(object):
+
+    def get_hash(self):
+        digest = hashlib.md5()
+        for key, value in sorted(self.__dict__.viewitems()):
+            digest.update(key)
+            try:
+                items = value.viewitems()
+                items = sorted(items)
+            except AttributeError:
+                try:
+                    items = value.__iter__()
+                except AttributeError:
+                    items = (value,)
+            for item in items:
+                digest.update(str(item))
+        return digest.hexdigest()
 
 
 @contextlib.contextmanager

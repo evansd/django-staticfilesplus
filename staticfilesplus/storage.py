@@ -15,7 +15,7 @@ class CachedFilesPlusMixin(CachedFilesMixin):
 
     Also provides an option to remove the original unversioned files.
     """
-    remove_unversioned = True
+    remove_unversioned = False
 
     def __init__(self, *args, **kwargs):
         self.remove_unversioned = kwargs.pop('remove_unversioned',

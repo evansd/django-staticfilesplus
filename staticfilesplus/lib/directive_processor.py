@@ -7,84 +7,159 @@ Implements just the `require` and `stub` directives.
 Thanks to Sam Stephenson (author of Sprockets), and to Mike Yumatov (author of Gears
 -- https://github.com/gears/gears) for inspiration.
 """
-import re
+import collections
+import io
+import itertools
 import os
+import re
 import shlex
 import sys
+
+try:
+    import simplejson as json
+except ImportError:
+    import json
+
+
+class DirectiveError(Exception):
+    filename = None
+    line_num = None
+
+    def __str__(self):
+        message = Exception.__str__(self)
+        if self.filename is not None:
+            return 'in "{}" at line {}: {}'.format(
+                    self.filename,
+                    self.line_num,
+                    message)
+        else:
+            return message
+
+class FileNotFoundError(DirectiveError):
+    pass
+
+class UnknownDirectiveError(DirectiveError):
+    pass
+
+Directive = collections.namedtuple('Directive', ['command', 'argument'])
 
 
 class DirectiveProcessor(object):
 
-    class DirectiveError(Exception):
-        pass
-
-    HEADER_RE = re.compile(r"""
-        ^( \s* (
-            ( /\* .*? \*/ ) |  # multiline comment
-            ( // [^\n]* )+ |   # slash comment
-            ( \# [^\n]* )+     # dash comment
-        ) )+
-        """,
-        re.DOTALL | re.VERBOSE)
+    HEADER_LINE_RE = re.compile(r"""
+        (
+            ( \s+ ) |                               # Blocks of whitespace
+            ( // .* $ ) |                           # Double-slash comment (to line end)
+            ( \# .* $ ) |                           # Hash comment (to line end)
+            ( /\* {any_string_except_star_slash} (  # Multiline comment terminated by ...
+                \*/ |                               # ... close marker ...
+                (?P<open> $ )                       # ... or end of line
+            ))
+        # Match any combination of the above blocks until end of the line
+        )+ $
+        """.format(any_string_except_star_slash=r'([^\*]|\*(?!/))*'),
+        re.VERBOSE)
 
     DIRECTIVE_RE = re.compile(r"""
-        ^ \s* (?:\*|//|\#) \s* = \s* ( \w+ [./'"\s\w-]* ) $
+        ^ \s* (?:\*|//|\#) \s* = \s* ( \w+ [./'"\s\w-]*? ) \n? $
         """,
         re.VERBOSE)
 
-    current_line = None
-    current_file = None
-
-    def __init__(self, load_paths=None):
+    def __init__(self, name=None, load_paths=None):
         self.load_paths = load_paths if load_paths is not None else []
+        self.files_seen = set()
+        self.handles = set()
+        self.output = self.process_file(name, path_context='/')
 
-    def load(self, name):
-        return self.process_file(name, path_context=os.getcwd(), files_seen=set())[0]
+    @property
+    def file_list(self):
+        return [filename for (filename, _) in self.output]
 
-    def process_file(self, name, path_context, files_seen):
-        path = self.find_path(name, path_context)
-        if path in files_seen:
-            return None, files_seen
-        files_seen.add(path)
-        source = self.get_file_contents(path)
-        self.current_file = path
-        directives, body = self.extract_directives(source)
+    def write_with_source_map(self, f, source_map_name, prefix='/'):
+        source_map = SourceMap()
+        for filename, lines in self.output:
+            url = self.get_url_for_filename(filename, prefix)
+            source_map.set_current_file(url)
+            for line in lines:
+                source_map.add_line(line)
+                f.write(line)
+        f.write('//# sourceMappingURL={}\n'.format(source_map_name))
+        return source_map
+
+    def get_url_for_filename(self, filename, prefix):
+        for path in self.load_paths:
+            if filename.startswith(path):
+                return prefix + filename[len(path):].lstrip('/')
+        return os.path.basename(filename)
+
+    def write(self, f):
+        for filename, lines in self.output:
+            for line in lines:
+                f.write(line)
+
+    def process_file(self, name, path_context):
+        path = self.find_file(name, path_context)
+        if path in self.files_seen:
+            return []
+        self.files_seen.add(path)
         output = []
-        for line_num, directive, arg in directives:
-            # Keep track of line number for more helpful exceptions
-            self.current_line = line_num
-            self.current_file = path
-            content, new_files_seen = self.process_directive(
-                    directive, arg, path_context=path, files_seen=files_seen)
-            self.current_line = None
-            files_seen.update(new_files_seen)
-            if content is not None:
-                output.append(content)
-        output.append(body)
-        return '\n'.join(output), files_seen
+        header_lines = []
+        lines = self.get_file_lines(path)
+        line_num = 1
+        try:
+            for line, directive in self.extract_directives(lines):
+                header_lines.append(line)
+                if directive:
+                    directive_output = self.exec_directive(directive, path_context=path)
+                    output.extend(directive_output)
+                line_num += 1
+        except DirectiveError as exc:
+            # Mark exceptions with the source file and line number. (Only
+            # innermost handler should do this hence the `is None` check)
+            if exc.filename is None:
+                exc.filename = path
+                exc.line_num = line_num
+            raise
+        output.append((path, itertools.chain(header_lines, lines)))
+        return output
 
-    def get_file_contents(self, path):
-        with open(path, 'rb') as f:
-            return f.read().decode('utf-8')
+    def get_file_lines(self, path):
+        with io.open(path, 'rt', encoding='utf-8') as f:
+            # Store reference to the handle so we can close the file without
+            # consuming the iterator if we decide we don't need it
+            self.handles.add(f)
+            for line in f:
+                # Ensure trailing newline. This will only ever match on the
+                # last line of the file
+                if line[-1] != '\n':
+                    line += '\n'
+                yield line
+            self.handles.remove(f)
 
-    def process_directive(self, directive, arg, path_context, files_seen):
-        if directive not in ('require', 'stub'):
-            raise self.error('Unimplemented directive: {}'.format(directive))
-        output, files_seen = self.process_file(arg, path_context, files_seen)
-        if directive == 'require':
-            return output, files_seen
+    def close(self):
+        """Close any open file handles"""
+        for handle in self.handles:
+            handle.close()
+
+    def exec_directive(self, directive, path_context):
+        if directive.command in ('require', 'stub'):
+            output = self.process_file(directive.argument, path_context)
+            # The `stub` directive just adds files to the `files_seen` set but
+            # doesn't return any output
+            return output if directive.command != 'stub' else []
         else:
-            return None, files_seen
+            raise UnknownDirectiveError('Unknown directive: {}'.format(directive.command))
 
-    def find_path(self, name, path_context):
-        options = self.find_path_options(name, path_context)
+    def find_file(self, name, path_context):
+        options = self.get_path_options(name, path_context)
         for option in options:
             if os.path.exists(option):
                 return option
-        raise self.error('Unable to find "{}", tried:\n  {}'.format(
-                name, '\n  '.join(options)))
+        raise FileNotFoundError(
+                'Unable to find "{}", looked in:\n  {}'.format(
+                    name, '\n  '.join(options)))
 
-    def find_path_options(self, name, path_context):
+    def get_path_options(self, name, path_context):
         """
         Given a filename and a path context in which to resolve relative
         paths, return a list of possible locations for the file
@@ -111,49 +186,146 @@ class DirectiveProcessor(object):
             paths.extend(with_extension(path))
         return paths
 
-    def extract_directives(self, source):
-        match = self.HEADER_RE.match(source)
-        if not match:
-            header, rest_of_body = '', source
-        else:
-            header = match.group(0)
-            rest_of_body = source[len(header):]
-        directives = []
-        body = []
-        for line_num, line in enumerate(header.splitlines(), start=1):
-            match = self.DIRECTIVE_RE.match(line)
-            if match:
-                # Keep track of line number for more helpful exceptions
-                self.current_line = line_num
-                directive = self.parse_directive(match.group(1))
-                self.current_line = None
-                directives.append((line_num,) + directive)
-            else:
-                body.append(line)
-        body.append(rest_of_body.strip('\n'))
-        return directives, '\n'.join(body)
+    @classmethod
+    def extract_directives(cls, lines):
+        for line, is_header in cls.extract_header(lines):
+            directive = cls.parse_directive(line) if is_header else None
+            yield line, directive
 
-    def parse_directive(self, directive):
+    @classmethod
+    def extract_header(cls, lines):
+        comment_open = False
+        for line in lines:
+            start = 0
+            # If we're in the middle of a multiline comment, check for the
+            # close comment marker and treat that as the beginning of the
+            # string if found
+            if comment_open:
+                close_marker = line.find('*/')
+                if close_marker > -1:
+                    start = close_marker + 2
+                    comment_open = False
+            if not comment_open:
+                match = cls.HEADER_LINE_RE.match(line, pos=start)
+                if not match:
+                    break
+                if match.group('open') is not None:
+                    comment_open = True
+            yield line, True
+        else:
+            # If we exhausted the iterator without breaking then there are no
+            # non-header lines
+            return
+        # Otherwise the last line processed is the first non-header line
+        yield line, False
+
+    @classmethod
+    def parse_directive(cls, line):
+        match = cls.DIRECTIVE_RE.match(line)
+        if not match:
+            return None
         # shlex didn't support Unicode prior to 2.7.3
         if sys.version_info < (2, 7, 3):
-            directive = directive.encode('utf-8')
+            text = match.group(1).encode('utf-8')
+        else:
+            text = match.group(1)
         try:
-            args = tuple(shlex.split(directive))
-        except ValueError as e:
-            raise self.error(str(e))
+            args = tuple(shlex.split(text))
+        except ValueError as exc:
+            raise DirectiveError('{} in: {}'.format(exc, text))
         if len(args) != 2:
-            raise self.error('Expected 2 arguments but got {} in: {}'.format(
-                len(args), directive))
-        return args
-
-    def error(self, msg):
-        """
-        Raise a DirectiveError with the current file and line as context
-        """
-        if self.current_line and self.current_file:
-            msg = '{}\nError in {} line {}'.format(
-                    msg, self.current_file, self.current_line)
-        return self.DirectiveError(msg)
+            raise DirectiveError('Expected 2 arguments but got {} in {}'.format(
+                len(args), text))
+        return Directive(command=args[0], argument=args[1])
 
 
+class SourceMap(object):
 
+    BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    VLQ_BASE_SHIFT = 5
+    # binary: 100000
+    VLQ_BASE = 1 << VLQ_BASE_SHIFT
+    # binary: 011111
+    VLQ_BASE_MASK = VLQ_BASE - 1
+    # binary: 100000
+    VLQ_CONTINUATION_BIT = VLQ_BASE
+
+    def __init__(self):
+        self.sources = []
+        self.sourcesContent = []
+        self.mappings = []
+        self.last_file_n = 0
+        self.last_line_n = 0
+        self.current_file_n = 0
+        self.current_line_n = 0
+
+    def set_current_file(self, path):
+        try:
+            index = self.sources.index(path)
+        except ValueError:
+            self.sources.append(path)
+            self.sourcesContent.append([])
+            index = len(self.sources) - 1
+        self.current_file_n = index
+        self.current_line_n = 0
+
+    def add_line(self, line):
+        self.sourcesContent[self.current_file_n].append(line)
+        segment = [
+            0,
+            self.current_file_n - self.last_file_n,
+            self.current_line_n - self.last_line_n,
+            0
+        ]
+        self.mappings.append(''.join(map(self.encode, segment)))
+        self.last_file_n = self.current_file_n
+        self.last_line_n = self.current_line_n
+        self.current_line_n += 1
+
+    def as_dict(self, inline_sources=True):
+        # Order matters here: it's part of the spec
+        src_map = collections.OrderedDict()
+        src_map['version'] = 3
+        src_map['sources'] = self.sources[::]
+        src_map['sourcesContent'] = self.get_sources_content() if inline_sources else []
+        src_map['names'] = []
+        src_map['mappings'] = ';'.join(self.mappings)
+        return src_map
+
+    def get_sources_content(self):
+        return [''.join(lines) for lines in self.sourcesContent]
+
+    def add_inline_sources(self, filename):
+        with open(filename, 'r+b') as f:
+            orig_map = json.load(f, object_pairs_hook=collections.OrderedDict)
+            f.seek(0)
+            src_map = collections.OrderedDict()
+            # Copy over original values, retaining order, and injecting our new
+            # `sourcesContent` after `sources`
+            for key, value in orig_map.items():
+                if key != 'sourcesContent':
+                    src_map[key] = value
+                if key == 'sources':
+                    src_map['sourcesContent'] = self.get_sources_content()
+            json.dump(src_map, f)
+
+    def dump(self, f, **kwargs):
+        json.dump(self.as_dict(**kwargs), f)
+
+    def dumps(self, **kwargs):
+        return json.dumps(self.as_dict(**kwargs))
+
+    def encode(self, value):
+        encoded = ''
+        vlq = self.to_vlq_signed(value)
+        while True:
+            digit = vlq & self.VLQ_BASE_MASK
+            vlq >>= self.VLQ_BASE_SHIFT
+            if vlq:
+                digit |= self.VLQ_CONTINUATION_BIT
+            encoded += self.BASE64[digit]
+            if not vlq:
+                return encoded
+
+    def to_vlq_signed(self, value):
+        return ((-value) << 1) + 1 if value < 0 else (value << 1) + 0
