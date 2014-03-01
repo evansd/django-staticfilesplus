@@ -2,58 +2,49 @@ from __future__ import absolute_import, unicode_literals
 
 import os
 
-from django.conf import settings
-
-from ..utils import (call_command, get_staticfiles_dirs, any_files_modified_since,
-        make_directories, Config)
+from .base import BaseProcessor
 
 
-class LESSProcessor(object):
+class LESSProcessor(BaseProcessor):
 
-    def reverse_mapping(self, name):
-        if name.endswith('.css'):
-            return name[:-len('.css')] + '.less'
-        if name.endswith('.css.map'):
-            return name[:-len('.css.map')] + '.less'
+    input_extension = '.less'
+    output_extension = '.css'
+    supports_source_maps = True
 
-    def process_file(self, input_name, input_path, tmp_dir):
-        if not input_name.endswith('.less'):
-            return None
-        if self.is_ignored_file(input_name):
-            return []
-        cfg = self.get_config(input_name)
-        output_name = input_name[:-len('.less')] + '.css'
-        output_path = os.path.join(tmp_dir, cfg.get_hash(), output_name)
-        if cfg.source_maps:
-            outputs = [(output_name, output_path), (output_name + '.map', output_path + '.map')]
-        else:
-            outputs = [(output_name, output_path)]
-        staticfiles_dirs = get_staticfiles_dirs()
+    def __init__(self, *args, **kwargs):
+        super(LESSProcessor, self).__init__(*args, **kwargs)
+        self.less_bin = getattr(self.settings,
+                'STATICFILESPLUS_LESS_BIN', 'lessc')
+
+    def process(self, input_name, input_path, outputs):
         # Bail early if no LESS files have changed since we last processed
         # this file
-        if not any_files_modified_since(output_path,
-                directories=staticfiles_dirs,
-                extension='.less'):
+        last_output_path = outputs[-1][1]
+        if not self.any_files_modified_since(
+                last_output_path,
+                self.list_all_input_files()):
             return outputs
-        make_directories(output_path)
-        less_bin = getattr(settings, 'STATICFILESPLUS_LESS_BIN', 'lessc')
-        include_path = os.pathsep.join(staticfiles_dirs)
-        args = [less_bin, '--include-path={}'.format(include_path)]
-        if cfg.source_maps:
+        output_path = outputs[0][1]
+        self.make_directories(output_path)
+        include_path = os.pathsep.join(self.load_paths)
+        args = [self.less_bin,
+                # Disable colourized output
+                '--no-color',
+                '--include-path={}'.format(include_path)]
+        if self.source_maps_enabled:
             args.extend(['--source-map', '--source-map-less-inline'])
-        if cfg.compress:
-            args.append('--clean-css')
+        if self.minify_enabled:
+            args.append('--compress')
         args.extend([input_path, output_path])
-        call_command(args, hint="Have you installed LESS? See http://lesscss.org")
+        self.call_command(args, hint="Have you installed LESS? See http://lesscss.org")
         return outputs
+
+    def list_all_input_files(self):
+        for directory in self.load_paths:
+            for root, _, files in os.walk(directory):
+                for filename in files:
+                    if filename.endswith(self.input_extension):
+                        yield os.path.join(root, filename)
 
     def is_ignored_file(self, name):
         return name.startswith('_') or '/_' in name
-
-    def get_config(self, input_name):
-        cfg = Config()
-        cfg.source_maps = getattr(settings,
-                'STATICFILESPLUS_SOURCE_MAPS', settings.DEBUG)
-        cfg.compress = getattr(settings,
-                'STATICFILESPLUS_LESS_COMPRESS', not settings.DEBUG)
-        return cfg

@@ -15,10 +15,7 @@ import re
 import shlex
 import sys
 
-try:
-    import simplejson as json
-except ImportError:
-    import json
+from .source_maps import SourceMap
 
 
 class DirectiveError(Exception):
@@ -75,6 +72,11 @@ class DirectiveProcessor(object):
     def file_list(self):
         return [filename for (filename, _) in self.output]
 
+    def write(self, f):
+        for filename, lines in self.output:
+            for line in lines:
+                f.write(line)
+
     def write_with_source_map(self, f, source_map_name, prefix='/'):
         source_map = SourceMap()
         for filename, lines in self.output:
@@ -83,7 +85,7 @@ class DirectiveProcessor(object):
             for line in lines:
                 source_map.add_line(line)
                 f.write(line)
-        f.write('//# sourceMappingURL={}\n'.format(source_map_name))
+        f.write('/*# sourceMappingURL={} */\n'.format(source_map_name))
         return source_map
 
     def get_url_for_filename(self, filename, prefix):
@@ -91,11 +93,6 @@ class DirectiveProcessor(object):
             if filename.startswith(path):
                 return prefix + filename[len(path):].lstrip('/')
         return os.path.basename(filename)
-
-    def write(self, f):
-        for filename, lines in self.output:
-            for line in lines:
-                f.write(line)
 
     def process_file(self, name, path_context):
         path = self.find_file(name, path_context)
@@ -140,6 +137,14 @@ class DirectiveProcessor(object):
         """Close any open file handles"""
         for handle in self.handles:
             handle.close()
+
+    # Support using object as context manger which closes files on exit
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+        return False
 
     def exec_directive(self, directive, path_context):
         if directive.command in ('require', 'stub'):
@@ -237,95 +242,3 @@ class DirectiveProcessor(object):
             raise DirectiveError('Expected 2 arguments but got {} in {}'.format(
                 len(args), text))
         return Directive(command=args[0], argument=args[1])
-
-
-class SourceMap(object):
-
-    BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    VLQ_BASE_SHIFT = 5
-    # binary: 100000
-    VLQ_BASE = 1 << VLQ_BASE_SHIFT
-    # binary: 011111
-    VLQ_BASE_MASK = VLQ_BASE - 1
-    # binary: 100000
-    VLQ_CONTINUATION_BIT = VLQ_BASE
-
-    def __init__(self):
-        self.sources = []
-        self.sourcesContent = []
-        self.mappings = []
-        self.last_file_n = 0
-        self.last_line_n = 0
-        self.current_file_n = 0
-        self.current_line_n = 0
-
-    def set_current_file(self, path):
-        try:
-            index = self.sources.index(path)
-        except ValueError:
-            self.sources.append(path)
-            self.sourcesContent.append([])
-            index = len(self.sources) - 1
-        self.current_file_n = index
-        self.current_line_n = 0
-
-    def add_line(self, line):
-        self.sourcesContent[self.current_file_n].append(line)
-        segment = [
-            0,
-            self.current_file_n - self.last_file_n,
-            self.current_line_n - self.last_line_n,
-            0
-        ]
-        self.mappings.append(''.join(map(self.encode, segment)))
-        self.last_file_n = self.current_file_n
-        self.last_line_n = self.current_line_n
-        self.current_line_n += 1
-
-    def as_dict(self, inline_sources=True):
-        # Order matters here: it's part of the spec
-        src_map = collections.OrderedDict()
-        src_map['version'] = 3
-        src_map['sources'] = self.sources[::]
-        src_map['sourcesContent'] = self.get_sources_content() if inline_sources else []
-        src_map['names'] = []
-        src_map['mappings'] = ';'.join(self.mappings)
-        return src_map
-
-    def get_sources_content(self):
-        return [''.join(lines) for lines in self.sourcesContent]
-
-    def add_inline_sources(self, filename):
-        with open(filename, 'r+b') as f:
-            orig_map = json.load(f, object_pairs_hook=collections.OrderedDict)
-            f.seek(0)
-            src_map = collections.OrderedDict()
-            # Copy over original values, retaining order, and injecting our new
-            # `sourcesContent` after `sources`
-            for key, value in orig_map.items():
-                if key != 'sourcesContent':
-                    src_map[key] = value
-                if key == 'sources':
-                    src_map['sourcesContent'] = self.get_sources_content()
-            json.dump(src_map, f)
-
-    def dump(self, f, **kwargs):
-        json.dump(self.as_dict(**kwargs), f)
-
-    def dumps(self, **kwargs):
-        return json.dumps(self.as_dict(**kwargs))
-
-    def encode(self, value):
-        encoded = ''
-        vlq = self.to_vlq_signed(value)
-        while True:
-            digit = vlq & self.VLQ_BASE_MASK
-            vlq >>= self.VLQ_BASE_SHIFT
-            if vlq:
-                digit |= self.VLQ_CONTINUATION_BIT
-            encoded += self.BASE64[digit]
-            if not vlq:
-                return encoded
-
-    def to_vlq_signed(self, value):
-        return ((-value) << 1) + 1 if value < 0 else (value << 1) + 0

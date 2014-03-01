@@ -9,6 +9,7 @@ from django.contrib.staticfiles import finders
 from django.core.management import call_command
 
 from staticfilesplus.processors import BaseProcessor
+from staticfilesplus.utils import create
 
 from .utils import BaseStaticfilesPlusTest
 
@@ -19,14 +20,22 @@ class SimpleTestProcessor(BaseProcessor):
     processed_suffix = '.processed'
     string_to_add = 'processed\n'
 
-    def process_file(self, input_path, output_path):
-        with open(output_path, 'wb') as out_file:
+    def reverse_mapping(self, name):
+        if name.endswith(self.processed_suffix):
+            return name[:-len(self.processed_suffix)] + self.original_suffix
+
+    def process_file(self, input_name, input_path):
+        if not input_name.endswith(self.original_suffix):
+            return None
+        if input_name.endswith('.ignore' + self.original_suffix):
+            return []
+        output_name = input_name[:-len(self.original_suffix)] + self.processed_suffix
+        output_path = self.get_path(output_name)
+        with create(output_path) as out_file:
             with open(input_path, 'rb') as in_file:
                 out_file.write(self.string_to_add.encode('utf8'))
                 out_file.write(in_file.read())
-
-    def is_ignored_file(self, path):
-        return path.endswith('.ignore' + self.original_suffix)
+        return [(output_name, output_path)]
 
 # We define another processsor with the same output suffix, but a
 # a different original suffix as might be the case if you have

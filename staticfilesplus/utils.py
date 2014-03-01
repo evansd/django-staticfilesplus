@@ -4,10 +4,6 @@ import hashlib
 import os
 import subprocess
 
-from django.core.exceptions import ImproperlyConfigured
-from django.contrib.staticfiles.finders import (get_finders,
-        AppDirectoriesFinder, FileSystemFinder)
-
 
 class Config(object):
 
@@ -53,15 +49,6 @@ def make_directories(filename):
             raise
 
 
-def get_staticfiles_dirs():
-    dirs = []
-    for finder in get_finders():
-        if isinstance(finder, (AppDirectoriesFinder, FileSystemFinder)):
-            for storage in finder.storages.values():
-                dirs.append(storage.location)
-    return dirs
-
-
 def call_command(*args, **kwargs):
     """
     Wraps subprocess.Popen to produce slightly more readable
@@ -72,14 +59,14 @@ def call_command(*args, **kwargs):
     input = kwargs.pop('input', None)
     for key in ('stdin', 'stdout', 'stderr'):
         kwargs.setdefault(key, subprocess.PIPE)
-    proc = subprocess.Popen(*args, **kwargs)
     try:
+        proc = subprocess.Popen(*args, **kwargs)
         stdout, stderr = proc.communicate(input)
     except OSError as e:
         if e.errno == errno.ENOENT:
             if hint:
                 hint = '\n' + hint
-            raise ImproperlyConfigured(
+            raise MissingDependency(
                 "Couldn't find executable '{executable}'{hint}".format(
                     executable=executable, hint=hint))
         else:
@@ -89,6 +76,9 @@ def call_command(*args, **kwargs):
                 output=b'\n'.join(filter(None, (stdout, stderr))))
     return stdout
 
+
+class MissingDependency(Exception):
+    pass
 
 class CalledProcessError(subprocess.CalledProcessError):
     """
@@ -106,23 +96,14 @@ class CalledProcessError(subprocess.CalledProcessError):
                     output=self.output.decode('utf8'))
 
 
-def any_files_modified_since(target_file, directories, extension):
-    """
-    Checks whether any files in `directories` matching `extension`
-    have been modified since `target_file` was last modified
-    """
+def any_files_modified_since(output_file, input_files):
     try:
-        target_last_modified = os.path.getmtime(target_file)
+        target_last_modified = os.path.getmtime(output_file)
     except OSError as e:
         if e.errno == errno.ENOENT:
             return True
         raise
-    for directory in directories:
-        for root, _, files in os.walk(directory):
-            for filename in files:
-                if not filename.endswith(extension):
-                    continue
-                last_modified = os.path.getmtime(os.path.join(root, filename))
-                if last_modified > target_last_modified:
-                    return True
+    for filename in input_files:
+        if os.path.getmtime(filename) > target_last_modified:
+            return True
     return False

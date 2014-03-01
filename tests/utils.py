@@ -28,7 +28,7 @@ class BaseStaticfilesPlusTest(SimpleTestCase):
     def setUpClass(cls):
         """
         A necessary evil: monkey-patch various memoized functions to prevent
-        test state leaking out. We store the originals and replce them when
+        test state leaking out. We store the originals and replace them when
         we're done.
         """
         if not hasattr(cls, '_originals'):

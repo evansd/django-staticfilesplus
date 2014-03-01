@@ -1,0 +1,2 @@
+class ProcessorNotUsed(Exception):
+    pass

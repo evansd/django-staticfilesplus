@@ -2,29 +2,30 @@ from __future__ import absolute_import, unicode_literals
 
 import os
 
-from django.conf import settings
-
 from . import BaseProcessor
-from ..utils import get_staticfiles_dirs, call_command
 
 
 class SassProcessor(BaseProcessor):
-    original_suffix = '.sass'
-    processed_suffix = '.css'
+    input_extension = '.sass'
+    output_extension = '.css'
+    supports_source_maps = False
 
-    def is_ignored_file(self, path):
-        return any(part.startswith('_') for part in path.split(os.sep))
+    def __init__(self, *args, **kwargs):
+        super(SassProcessor, self).__init__(*args, **kwargs)
+        self.sass_bin = getattr(self.settings, 'STATICFILESPLUS_SASS_BIN', 'sass')
 
-    def process_file(self, input_path, output_path):
-        compress = getattr(settings, 'STATICFILESPLUS_SASS_COMPRESS',
-                not settings.DEBUG)
-        sass_bin = getattr(settings, 'STATICFILESPLUS_SASS_BIN', 'sass')
-        extra_args = ['--style', 'compressed'] if compress else []
-        load_path = os.pathsep.join(get_staticfiles_dirs())
-        call_command([sass_bin, '--load-path', load_path]
+    def process(self, input_name, input_path, outputs):
+        output_path = outputs[0][1]
+        extra_args = ['--style', 'compressed'] if self.minify_enabled else []
+        load_path = os.pathsep.join(self.load_paths)
+        self.call_command([self.sass_bin, '--load-path', load_path]
                 + extra_args + ['--update', input_path + ':' + output_path],
             hint="Have you installed Sass? See http://sass-lang.com")
+        return outputs
+
+    def is_ignored_file(self, name):
+        return any(part.startswith('_') for part in name.split(os.sep))
 
 
 class ScssProcessor(SassProcessor):
-    original_suffix = '.scss'
+    input_extension = '.scss'
